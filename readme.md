@@ -1,13 +1,12 @@
-dev in msys2
+dev in msys2mingw64
 
 install gcc
 ```
 pacman -S mingw-w64-x86_64-gcc make
 ```
 
-
 build
 ```
-make all
 make clean
+make all
 ```
