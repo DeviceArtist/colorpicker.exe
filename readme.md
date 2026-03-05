@@ -1,10 +1,13 @@
-动态编译  依赖 msys2-dll
+dev in msys2
+
+install gcc
 ```
-gcc colorpicker.c -o colorpicker.exe -mwindows -lkernel32 -luser32 -lgdi32 -Wl,--subsystem,windows
+pacman -S mingw-w64-x86_64-gcc make
 ```
 
 
-静态编译
+build
 ```
-gcc colorpicker.c -o colorpicker.exe -mwindows -static-libgcc -static-libstdc++ -lkernel32 -luser32 -lgdi32 -Wl,--subsystem,windows
+make all
+make clean
 ```
