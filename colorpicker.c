@@ -4,45 +4,122 @@
 // 全局变量
 HBITMAP g_hBitmap = NULL;
 int g_nPhysicalWidth = 0, g_nPhysicalHeight = 0;  // 实际物理分辨率
+double g_dScale = 1.0;  // 缩放比例，默认1.0（原始大小）
+int g_nOffsetX = 0, g_nOffsetY = 0;  // 截图偏移量，用于中心点缩放
+POINT g_ptLastMouse;  // 最后鼠标位置
 
 // 窗口过程
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_CREATE: {
-            // 获取实际物理屏幕分辨率（不考虑系统缩放）
+            // 获取实际物理屏幕分辨率
             DEVMODE dm = {0};
             dm.dmSize = sizeof(DEVMODE);
             EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &dm);
             g_nPhysicalWidth = dm.dmPelsWidth;
             g_nPhysicalHeight = dm.dmPelsHeight;
             
-            // 获取屏幕DC（包含整个物理屏幕）
+            // 获取屏幕DC并创建截图
             HDC hScreenDC = GetDC(NULL);
-            if (hScreenDC == NULL) break;
-            
-            // 创建兼容内存DC
-            HDC hMemDC = CreateCompatibleDC(hScreenDC);
-            if (hMemDC == NULL) {
+            if (hScreenDC != NULL) {
+                HDC hMemDC = CreateCompatibleDC(hScreenDC);
+                if (hMemDC != NULL) {
+                    g_hBitmap = CreateCompatibleBitmap(hScreenDC, g_nPhysicalWidth, g_nPhysicalHeight);
+                    if (g_hBitmap != NULL) {
+                        HBITMAP hOldBitmap = (HBITMAP)SelectObject(hMemDC, g_hBitmap);
+                        BitBlt(hMemDC, 0, 0, g_nPhysicalWidth, g_nPhysicalHeight, 
+                               hScreenDC, 0, 0, SRCCOPY);
+                        SelectObject(hMemDC, hOldBitmap);
+                    }
+                    DeleteDC(hMemDC);
+                }
                 ReleaseDC(NULL, hScreenDC);
-                break;
             }
             
-            // 创建与实际物理分辨率匹配的位图
-            g_hBitmap = CreateCompatibleBitmap(hScreenDC, g_nPhysicalWidth, g_nPhysicalHeight);
-            if (g_hBitmap != NULL) {
-                HBITMAP hOldBitmap = (HBITMAP)SelectObject(hMemDC, g_hBitmap);
-                // 1:1复制整个物理屏幕内容
-                BitBlt(hMemDC, 0, 0, g_nPhysicalWidth, g_nPhysicalHeight, 
-                       hScreenDC, 0, 0, SRCCOPY);
-                SelectObject(hMemDC, hOldBitmap);
-            }
-            
-            DeleteDC(hMemDC);
-            ReleaseDC(NULL, hScreenDC);
-            
-            // 设置吸管光标
+            // 设置光标为十字线
             SetClassLongPtr(hwnd, GCLP_HCURSOR, 
                 (LONG_PTR)LoadCursor(NULL, MAKEINTRESOURCE(32515))); // IDC_CROSS
+            return 0;
+        }
+
+        case WM_MOUSEMOVE: {
+            // 记录鼠标位置
+            g_ptLastMouse.x = LOWORD(lParam);
+            g_ptLastMouse.y = HIWORD(lParam);
+            return 0;
+        }
+
+        case WM_KEYDOWN: {
+            switch (wParam) {
+                case VK_ADD:     // 数字小键盘上的"+"键
+                case VK_OEM_PLUS: // 主键盘上的"+"键
+                    {
+                        // 计算鼠标在截图上的位置
+                        double mouseXOnScreen = (g_ptLastMouse.x - g_nOffsetX) / g_dScale;
+                        double mouseYOnScreen = (g_ptLastMouse.y - g_nOffsetY) / g_dScale;
+                        
+                        // 保存当前缩放比例
+                        double oldScale = g_dScale;
+                        
+                        // 调整缩放比例
+                        g_dScale *= 1.2;  // 每次放大20%
+                        if (g_dScale > 4.0) g_dScale = 4.0;  // 最大放大4倍
+                        
+                        // 计算新的偏移量，使鼠标位置保持在屏幕中央
+                        g_nOffsetX = (int)(g_ptLastMouse.x - mouseXOnScreen * g_dScale);
+                        g_nOffsetY = (int)(g_ptLastMouse.y - mouseYOnScreen * g_dScale);
+                        
+                        // 确保截图完全显示在窗口内
+                        int nDrawWidth = (int)(g_nPhysicalWidth * g_dScale);
+                        int nDrawHeight = (int)(g_nPhysicalHeight * g_dScale);
+                        
+                        RECT rcClient;
+                        GetClientRect(hwnd, &rcClient);
+                        
+                        g_nOffsetX = max(rcClient.right - nDrawWidth, min(g_nOffsetX, 0));
+                        g_nOffsetY = max(rcClient.bottom - nDrawHeight, min(g_nOffsetY, 0));
+                    }
+                    InvalidateRect(hwnd, NULL, TRUE);  // 刷新窗口
+                    break;
+                    
+                case VK_SUBTRACT: // 数字小键盘上的"-"键
+                case VK_OEM_MINUS: // 主键盘上的"-"键
+                    {
+                        // 计算鼠标在截图上的位置
+                        double mouseXOnScreen = (g_ptLastMouse.x - g_nOffsetX) / g_dScale;
+                        double mouseYOnScreen = (g_ptLastMouse.y - g_nOffsetY) / g_dScale;
+                        
+                        // 保存当前缩放比例
+                        double oldScale = g_dScale;
+                        
+                        // 调整缩放比例
+                        g_dScale /= 1.2;  // 每次缩小20%
+                        if (g_dScale < 0.25) g_dScale = 0.25;  // 最小缩小到25%
+                        
+                        // 计算新的偏移量，使鼠标位置保持在屏幕中央
+                        g_nOffsetX = (int)(g_ptLastMouse.x - mouseXOnScreen * g_dScale);
+                        g_nOffsetY = (int)(g_ptLastMouse.y - mouseYOnScreen * g_dScale);
+                        
+                        // 确保截图完全显示在窗口内
+                        int nDrawWidth = (int)(g_nPhysicalWidth * g_dScale);
+                        int nDrawHeight = (int)(g_nPhysicalHeight * g_dScale);
+                        
+                        RECT rcClient;
+                        GetClientRect(hwnd, &rcClient);
+                        
+                        g_nOffsetX = max(rcClient.right - nDrawWidth, min(g_nOffsetX, 0));
+                        g_nOffsetY = max(rcClient.bottom - nDrawHeight, min(g_nOffsetY, 0));
+                    }
+                    InvalidateRect(hwnd, NULL, TRUE);  // 刷新窗口
+                    break;
+                    
+                case '0':  // "0" 键
+                    g_dScale = 1.0;  // 恢复到原始大小
+                    g_nOffsetX = 0;
+                    g_nOffsetY = 0;
+                    InvalidateRect(hwnd, NULL, TRUE);  // 刷新窗口
+                    break;
+            }
             return 0;
         }
 
@@ -54,29 +131,37 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             RECT rcClient;
             GetClientRect(hwnd, &rcClient);
             
-            // 计算显示比例（保持截图1:1，不拉伸）
-            double scaleX = (double)rcClient.right / g_nPhysicalWidth;
-            double scaleY = (double)rcClient.bottom / g_nPhysicalHeight;
-            double scale = min(scaleX, scaleY);
+            // 计算显示尺寸
+            int nDrawWidth = (int)(g_nPhysicalWidth * g_dScale);
+            int nDrawHeight = (int)(g_nPhysicalHeight * g_dScale);
             
-            // 计算显示位置（居中显示）
-            int nDrawWidth = (int)(g_nPhysicalWidth * scale);
-            int nDrawHeight = (int)(g_nPhysicalHeight * scale);
-            int nDrawX = (rcClient.right - nDrawWidth) / 2;
-            int nDrawY = (rcClient.bottom - nDrawHeight) / 2;
+            // 计算显示位置
+            int nDrawX = g_nOffsetX;
+            int nDrawY = g_nOffsetY;
             
-            // 绘制截图（保持1:1比例，不拉伸）
+            // 确保显示在窗口内
+            nDrawX = max(rcClient.right - nDrawWidth, min(nDrawX, 0));
+            nDrawY = max(rcClient.bottom - nDrawHeight, min(nDrawY, 0));
+            
+            // 绘制截图
             if (g_hBitmap != NULL) {
                 HDC hMemDC = CreateCompatibleDC(hdc);
                 HBITMAP hOldBitmap = (HBITMAP)SelectObject(hMemDC, g_hBitmap);
                 
-                SetStretchBltMode(hdc, HALFTONE); // 高质量缩放
+                SetStretchBltMode(hdc, HALFTONE);  // 高质量缩放
                 StretchBlt(hdc, nDrawX, nDrawY, nDrawWidth, nDrawHeight,
                           hMemDC, 0, 0, g_nPhysicalWidth, g_nPhysicalHeight, SRCCOPY);
                 
                 SelectObject(hMemDC, hOldBitmap);
                 DeleteDC(hMemDC);
             }
+            
+            // 显示当前缩放比例
+            char szScale[32];
+            sprintf(szScale, "缩放比例: %.1f%%", g_dScale * 100);
+            SetTextColor(hdc, RGB(255, 255, 255));
+            SetBkMode(hdc, TRANSPARENT);
+            TextOut(hdc, 10, 10, szScale, strlen(szScale));
             
             EndPaint(hwnd, &ps);
             return 0;
@@ -87,14 +172,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             RECT rcClient;
             GetClientRect(hwnd, &rcClient);
             
-            // 计算显示比例
-            double scaleX = (double)rcClient.right / g_nPhysicalWidth;
-            double scaleY = (double)rcClient.bottom / g_nPhysicalHeight;
-            double scale = min(scaleX, scaleY);
+            // 计算显示尺寸
+            int nDrawWidth = (int)(g_nPhysicalWidth * g_dScale);
+            int nDrawHeight = (int)(g_nPhysicalHeight * g_dScale);
+            
+            // 计算显示位置
+            int nDrawX = g_nOffsetX;
+            int nDrawY = g_nOffsetY;
             
             // 将窗口坐标转换为实际屏幕坐标
-            int x = (int)((LOWORD(lParam) - (rcClient.right - g_nPhysicalWidth*scale)/2) / scale);
-            int y = (int)((HIWORD(lParam) - (rcClient.bottom - g_nPhysicalHeight*scale)/2) / scale);
+            int x = (int)((LOWORD(lParam) - nDrawX) / g_dScale);
+            int y = (int)((HIWORD(lParam) - nDrawY) / g_dScale);
             
             // 确保坐标在屏幕范围内
             x = max(0, min(x, g_nPhysicalWidth - 1));
@@ -146,7 +234,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     const char CLASS_NAME[] = "MinGWColorPicker";
     
-    // 获取实际物理屏幕分辨率（提前获取，避免窗口创建后可能的缩放问题）
+    // 获取实际物理屏幕分辨率
     DEVMODE dm = {0};
     dm.dmSize = sizeof(DEVMODE);
     EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &dm);
@@ -165,19 +253,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 1;
     }
 
-    // 创建与实际物理分辨率相同的全屏窗口
+    // 创建全屏窗口
     HWND hwnd = CreateWindowEx(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         CLASS_NAME,
-        "颜色拾取器",
+        "颜色拾取器 - 按+放大/-缩小/0恢复原始大小",
         WS_POPUP,
         0, 0, nPhysicalWidth, nPhysicalHeight,
         NULL, NULL, hInstance, NULL
     );
 
     if (hwnd) {
-        // 禁用DPI缩放，确保窗口显示实际物理分辨率
-        SetProcessDPIAware();
+        SetProcessDPIAware();  // 禁用DPI缩放
         
         ShowWindow(hwnd, nCmdShow);
         UpdateWindow(hwnd);
