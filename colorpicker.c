@@ -8,6 +8,53 @@ double g_dScale = 1.0;  // Zoom scale, default 1.0 (original size)
 int g_nOffsetX = 0, g_nOffsetY = 0;  // Screenshot offset for center-based zoom
 POINT g_ptLastMouse;  // Last mouse position
 
+// Helper function: Get color at current mouse position (returns CLR_INVALID if failed)
+COLORREF GetColorAtMouse() {
+    // Get client area dimensions
+    RECT rcClient;
+    GetClientRect(GetForegroundWindow(), &rcClient);
+    
+    // Calculate display dimensions and position
+    int nDrawWidth = (int)(g_nPhysicalWidth * g_dScale);
+    int nDrawHeight = (int)(g_nPhysicalHeight * g_dScale);
+    int nDrawX = g_nOffsetX;
+    int nDrawY = g_nOffsetY;
+    
+    // Convert window coordinates to actual screen coordinates
+    int x = (int)((g_ptLastMouse.x - nDrawX) / g_dScale);
+    int y = (int)((g_ptLastMouse.y - nDrawY) / g_dScale);
+    
+    // Ensure coordinates are within screen bounds
+    x = max(0, min(x, g_nPhysicalWidth - 1));
+    y = max(0, min(y, g_nPhysicalHeight - 1));
+    
+    // Get color at actual screen coordinates
+    HDC hScreenDC = GetDC(NULL);
+    if (!hScreenDC) return CLR_INVALID;
+    
+    COLORREF color = GetPixel(hScreenDC, x, y);
+    ReleaseDC(NULL, hScreenDC);
+    
+    return color;
+}
+
+// Helper function: Copy text to clipboard
+BOOL CopyToClipboard(const char* szText) {
+    if (!OpenClipboard(NULL)) return FALSE;
+    
+    EmptyClipboard();
+    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, strlen(szText) + 1);
+    if (hMem) {
+        LPSTR lpMem = (LPSTR)GlobalLock(hMem);
+        strcpy(lpMem, szText);
+        GlobalUnlock(hMem);
+        SetClipboardData(CF_TEXT, hMem);
+    }
+    
+    CloseClipboard();
+    return hMem != NULL;
+}
+
 // Window procedure
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
@@ -124,6 +171,19 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     g_nOffsetY = 0;
                     InvalidateRect(hwnd, NULL, TRUE);  // Refresh window
                     break;
+                    
+                case VK_RETURN: {  // 回车键复制RGB格式
+                    COLORREF color = GetColorAtMouse();
+                    if (color == CLR_INVALID) break;
+                    
+                    char szRGB[32];
+                    sprintf(szRGB, "RGB(%d,%d,%d)", 
+                        GetRValue(color), GetGValue(color), GetBValue(color));
+                    
+                    CopyToClipboard(szRGB);
+                    PostQuitMessage(0);  // 复制后退出程序
+                    break;
+                }
             }
             return 0;
         }
@@ -168,56 +228,25 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             SetBkMode(hdc, TRANSPARENT);
             TextOut(hdc, 10, 10, szScale, strlen(szScale));
             
+            // Display operation hints
+            char szHint[128];
+            sprintf(szHint, "Left Click: Copy HEX | Enter: Copy RGB | +/-: Zoom | 0: Reset");
+            TextOut(hdc, 10, 30, szHint, strlen(szHint));
+            
             EndPaint(hwnd, &ps);
             return 0;
         }
 
-        case WM_LBUTTONDOWN: {
-            // Get client area dimensions
-            RECT rcClient;
-            GetClientRect(hwnd, &rcClient);
+        case WM_LBUTTONDOWN: {  // 左键点击复制HEX格式
+            COLORREF color = GetColorAtMouse();
+            if (color == CLR_INVALID) break;
             
-            // Calculate display dimensions
-            int nDrawWidth = (int)(g_nPhysicalWidth * g_dScale);
-            int nDrawHeight = (int)(g_nPhysicalHeight * g_dScale);
-            
-            // Calculate display position
-            int nDrawX = g_nOffsetX;
-            int nDrawY = g_nOffsetY;
-            
-            // Convert window coordinates to actual screen coordinates
-            int x = (int)((LOWORD(lParam) - nDrawX) / g_dScale);
-            int y = (int)((HIWORD(lParam) - nDrawY) / g_dScale);
-            
-            // Ensure coordinates are within screen bounds
-            x = max(0, min(x, g_nPhysicalWidth - 1));
-            y = max(0, min(y, g_nPhysicalHeight - 1));
-            
-            // Get color at actual screen coordinates
-            HDC hScreenDC = GetDC(NULL);
-            COLORREF color = GetPixel(hScreenDC, x, y);
-            ReleaseDC(NULL, hScreenDC);
-            
-            // Format color string
-            char szColor[64];
-            sprintf(szColor, "RGB(%d,%d,%d) | #%02X%02X%02X", 
-                GetRValue(color), GetGValue(color), GetBValue(color),
+            char szHex[16];
+            sprintf(szHex, "#%02X%02X%02X", 
                 GetRValue(color), GetGValue(color), GetBValue(color));
             
-            // Copy to clipboard
-            if (OpenClipboard(NULL)) {
-                EmptyClipboard();
-                HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, strlen(szColor) + 1);
-                if (hMem) {
-                    LPSTR lpMem = (LPSTR)GlobalLock(hMem);
-                    strcpy(lpMem, szColor);
-                    GlobalUnlock(hMem);
-                    SetClipboardData(CF_TEXT, hMem);
-                }
-                CloseClipboard();
-            }
-            
-            PostQuitMessage(0);
+            CopyToClipboard(szHex);
+            PostQuitMessage(0);  // 复制后退出程序
             return 0;
         }
 
@@ -262,7 +291,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     HWND hwnd = CreateWindowEx(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         CLASS_NAME,
-        "Color Picker - Press + to zoom in, - to zoom out, 0 to reset",
+        "Color Picker - Left Click: Copy HEX | Enter: Copy RGB",
         WS_POPUP,
         0, 0, nPhysicalWidth, nPhysicalHeight,
         NULL, NULL, hInstance, NULL
